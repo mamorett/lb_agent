@@ -29,7 +29,7 @@ class OllamaOracleLogsAgent:
         
         intent = {
             "action": "analytics",
-            "params": {"time_range": "24h", "limit": 1000}
+            "params": {"time_range": "24h", "limit": 10000}
         }
         
         # Extract time ranges with regex
