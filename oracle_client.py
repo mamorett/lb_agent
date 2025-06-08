@@ -36,67 +36,62 @@ class OracleLogsClient:
         return f'search "{self.compartment_id}/{self.log_group_id}/{self.log_id}"'
     
     def _build_country_query(self, params: Dict[str, Any]) -> str:
-        """Build Oracle Cloud Logging query for country search"""
         base_query = self._build_base_query()
         conditions = []
         
         if params.get('country'):
-            conditions.append(f'data.Country = "{params["country"]}"')
+            conditions.append(f"data.Country = '{params['country']}'")
         
         if params.get('country_code'):
-            conditions.append(f'data.CountryCode = "{params["country_code"]}"')
+            conditions.append(f"data.CountryCode = '{params['country_code']}'")
         
         if conditions:
             base_query += ' | where ' + ' and '.join(conditions)
         
         if params.get('limit'):
-            base_query += f' | limit {params["limit"]}'
+            base_query += f" | limit {params['limit']}"
             
         return base_query
-    
+
     def _build_location_query(self, params: Dict[str, Any]) -> str:
-        """Build geographic bounding box query"""
         query = self._build_base_query()
-        query += f' | where data.Latitude >= {params["lat_min"]} and data.Latitude <= {params["lat_max"]}'
-        query += f' | where data.Longitude >= {params["lon_min"]} and data.Longitude <= {params["lon_max"]}'
+        query += f" | where data.Latitude >= {params['lat_min']} and data.Latitude <= {params['lat_max']}"
+        query += f" | where data.Longitude >= {params['lon_min']} and data.Longitude <= {params['lon_max']}"
         
         if params.get('limit'):
-            query += f' | limit {params["limit"]}'
+            query += f" | limit {params['limit']}"
             
         return query
-    
+
     def _build_ip_query(self, params: Dict[str, Any]) -> str:
-        """Build IP-based search query"""
         query = self._build_base_query()
         
         if params.get('ip_address'):
-            query += f' | where data.IP = "{params["ip_address"]}"'
+            query += f" | where data.IP = '{params['ip_address']}'"
         elif params.get('ip_range'):
             ip_prefix = params["ip_range"].split('/')[0].rsplit('.', 1)[0]
-            query += f' | where data.IP like "{ip_prefix}%"'
+            query += f" | where data.IP like '{ip_prefix}%'"
         
         if params.get('limit'):
-            query += f' | limit {params["limit"]}'
+            query += f" | limit {params['limit']}"
             
         return query
-    
+
     def _build_protocol_query(self, protocol: str, params: Dict[str, Any]) -> str:
-        """Build protocol-specific query"""
         query = self._build_base_query()
-        query += f' | where data.Protocol = "{protocol}"'
+        query += f" | where data.Protocol = '{protocol}'"
         
         if params.get('limit'):
-            query += f' | limit {params["limit"]}'
+            query += f" | limit {params['limit']}"
             
         return query
-    
+
     def _build_isp_query(self, isp: str, params: Dict[str, Any]) -> str:
-        """Build ISP-specific query"""
         query = self._build_base_query()
-        query += f' | where data.ISP = "{isp}"'
+        query += f" | where data.ISP = '{isp}'"
         
         if params.get('limit'):
-            query += f' | limit {params["limit"]}'
+            query += f" | limit {params['limit']}"
             
         return query
 
