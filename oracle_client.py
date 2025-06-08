@@ -7,14 +7,15 @@ from oci.logging import LoggingManagementClient
 from oci.loggingsearch import LogSearchClient
 from oci.loggingsearch.models import SearchLogsDetails
 
+# Simple import
 from models import LogEntry
 
 class OracleLogsClient:
-    def __init__(self, profile_name="SWEDEN"):
-        """Initialize Oracle Cloud connection"""
+    def __init__(self):
+        """Initialize Oracle Cloud connection only"""
         try:
-            # Initialize Oracle Cloud clients with specified profile
-            self.config = oci.config.from_file(profile_name=profile_name)
+            # Initialize Oracle Cloud clients
+            self.config = oci.config.from_file(profile_name="SWEDEN")
             self.logging_client = LoggingManagementClient(self.config)
             self.search_client = LogSearchClient(self.config)
             
@@ -24,11 +25,10 @@ class OracleLogsClient:
             self.log_id = "ocid1.log.oc1.eu-stockholm-1.amaaaaaarzyg5cyamgcm3ulhegg5x6qf7mslsr3z2hhitsm7rf3hdf5vf6iq"
             
             print("✅ Oracle Cloud connection initialized successfully")
-            print(f"🇸🇪 Using profile: {profile_name}")
             print(f"📋 Targeting log: {self.log_id}")
             
         except Exception as e:
-            print(f"❌ Failed to initialize Oracle Cloud connection with profile '{profile_name}': {e}")
+            print(f"❌ Failed to initialize Oracle Cloud connection: {e}")
             raise
     
     def _build_base_query(self) -> str:
@@ -37,127 +37,87 @@ class OracleLogsClient:
         return f'search "{self.compartment_id}/{self.log_group_id}/{self.log_id}"'
     
     def _build_country_query(self, params: Dict[str, Any]) -> str:
-        """Build query for country search"""
-        query = self._build_base_query()
+        """Build Oracle Cloud Logging query for country search"""
+        # Use specific log OCID
+        base_query = self._build_base_query()
         
-        # Add country filter
+        conditions = []
+        
         if params.get('country'):
-            country = params['country'].replace('"', '\\"')
-            query += f' | where data.Country = "{country}"'
-        elif params.get('country_code'):
-            code = params['country_code'].replace('"', '\\"')
-            query += f' | where data.CountryCode = "{code}"'
+            conditions.append(f'data.Country = "{params["country"]}"')
         
-        print(f"🔍 Built country query: {query}")
+        if params.get('country_code'):
+            conditions.append(f'data.CountryCode = "{params["country_code"]}"')
+        
+        if conditions:
+            base_query += ' | where ' + ' and '.join(conditions)
+        
+        # Remove limit from query - let pagination handle it
+        # if params.get('limit'):
+        #     base_query += f' | limit {params["limit"]}'
+            
+        return base_query
+    
+    def _build_location_query(self, params: Dict[str, Any]) -> str:
+        """Build geographic bounding box query"""
+        query = self._build_base_query()
+        query += f' | where data.Latitude >= {params["lat_min"]} and data.Latitude <= {params["lat_max"]}'
+        query += f' | where data.Longitude >= {params["lon_min"]} and data.Longitude <= {params["lon_max"]}'
+        
+        # Remove limit from query - let pagination handle it
+        # if params.get('limit'):
+        #     query += f' | limit {params["limit"]}'
+            
         return query
     
     def _build_ip_query(self, params: Dict[str, Any]) -> str:
-        """Build query for IP search"""
+        """Build IP-based search query"""
         query = self._build_base_query()
         
         if params.get('ip_address'):
-            ip = params['ip_address'].replace('"', '\\"')
-            query += f' | where data.IP = "{ip}"'
+            query += f' | where data.IP = "{params["ip_address"]}"'
         elif params.get('ip_range'):
-            # For IP ranges, use contains or startswith
-            ip_prefix = params['ip_range'].split('/')[0]
-            query += f' | where data.IP contains "{ip_prefix}"'
+            # For IP range, you might need to implement CIDR matching
+            # This is a simplified version
+            ip_prefix = params["ip_range"].split('/')[0].rsplit('.', 1)[0]
+            query += f' | where data.IP like "{ip_prefix}%"'
         
-        print(f"🔍 Built IP query: {query}")
-        return query
-    
-    def _build_location_query(self, params: Dict[str, Any]) -> str:
-        """Build query for location search"""
-        query = self._build_base_query()
-        
-        # Add geographic bounds
-        query += f' | where data.Latitude >= {params["lat_min"]}'
-        query += f' | where data.Latitude <= {params["lat_max"]}'
-        query += f' | where data.Longitude >= {params["lon_min"]}'
-        query += f' | where data.Longitude <= {params["lon_max"]}'
-        
-        print(f"🔍 Built location query: {query}")
-        return query
-    
-    def _build_analytics_query(self, params: Dict[str, Any]) -> str:
-        """Build query for analytics"""
-        query = self._build_base_query()
-        
-        # For analytics, we usually want all data without specific filters
-        # unless country is specified
-        if params.get('country'):
-            country = params['country'].replace('"', '\\"')
-            query += f' | where data.Country = "{country}"'
-        
-        print(f"🔍 Built analytics query: {query}")
-        return query
-    
-    def _parse_time_range(self, time_range: str) -> tuple[datetime, datetime]:
-        """Parse time range string into start and end datetime objects"""
-        end_time = datetime.utcnow()
-        
-        if time_range.endswith('h'):
-            hours = int(time_range[:-1])
-            start_time = end_time - timedelta(hours=hours)
-        elif time_range.endswith('d'):
-            days = int(time_range[:-1])
-            start_time = end_time - timedelta(days=days)
-        elif time_range.endswith('w'):
-            weeks = int(time_range[:-1])
-            start_time = end_time - timedelta(weeks=weeks)
-        else:
-            # Default to 24 hours
-            start_time = end_time - timedelta(hours=24)
-        
-        return start_time, end_time
-    
-    def _validate_query(self, query: str) -> bool:
-        """Validate Oracle Cloud Logging query syntax"""
-        if not query.strip():
-            return False
-        
-        if not query.strip().startswith('search '):
-            return False
-        
-        if self.log_id not in query:
-            return False
-        
-        return True
-    
-    def _get_next_page_token(self, response) -> str:
-        """Extract next page token from Oracle response"""
-        try:
-            # Try different possible locations for pagination token
-            if hasattr(response, 'opc_next_page') and response.opc_next_page:
-                return response.opc_next_page
-                
-            if hasattr(response.data, 'opc_next_page') and response.data.opc_next_page:
-                return response.data.opc_next_page
-                
-            if hasattr(response, 'headers') and response.headers:
-                headers = response.headers
-                return (headers.get('opc-next-page') or 
-                       headers.get('x-next-page') or 
-                       headers.get('next-page'))
+        # Remove limit from query - let pagination handle it
+        # if params.get('limit'):
+        #     query += f' | limit {params["limit"]}'
             
-            return None
+        return query
+    
+    def _build_protocol_query(self, protocol: str, params: Dict[str, Any]) -> str:
+        """Build protocol-specific query"""
+        query = self._build_base_query()
+        query += f' | where data.Protocol = "{protocol}"'
+        
+        # Remove limit from query - let pagination handle it
+        # if params.get('limit'):
+        #     query += f' | limit {params["limit"]}'
             
-        except Exception as e:
-            print(f"⚠️ Error extracting page token: {e}")
-            return None
+        return query
+    
+    def _build_isp_query(self, isp: str, params: Dict[str, Any]) -> str:
+        """Build ISP-specific query"""
+        query = self._build_base_query()
+        query += f' | where data.ISP = "{isp}"'
+        
+        # Remove limit from query - let pagination handle it
+        # if params.get('limit'):
+        #     query += f' | limit {params["limit"]}'
+            
+        return query
     
     async def _execute_oracle_query(self, query: str, start_time: datetime, end_time: datetime, max_results: int = None) -> List[Dict]:
-        """Execute Oracle Cloud Logging query with pagination - return same format as original"""
-        
-        if not self._validate_query(query):
-            print(f"❌ Invalid query format: {query}")
-            return []
-        
-        all_results = []
+        """Execute Oracle query with pagination support - ENHANCED VERSION"""
+        all_oracle_logs = []
         page_token = None
         page_count = 0
         
         print(f"🔍 Executing query: {query}")
+        print(f"📅 Time range: {start_time} to {end_time}")
         print(f"🎯 Max results: {max_results or 'unlimited'}")
         
         while True:
@@ -165,193 +125,170 @@ class OracleLogsClient:
                 page_count += 1
                 print(f"📄 Fetching page {page_count}...")
                 
-                search_request = SearchLogsDetails(
+                search_details = SearchLogsDetails(
                     time_start=start_time,
                     time_end=end_time,
                     search_query=query,
                     is_return_field_info=False
                 )
                 
+                # Add pagination token if we have one
                 if page_token:
-                    search_request.page = page_token
+                    search_details.page = page_token
                 
-                response = self.search_client.search_logs(search_request)
+                # Execute search
+                response = self.search_client.search_logs(search_details)
                 
                 if not response or not response.data or not response.data.results:
                     print(f"📊 No results on page {page_count}")
                     break
                 
-                # Convert SearchResult objects to the format the original code expected
-                batch_results = []
+                # Parse results using your original working logic
+                page_oracle_logs = []
                 for result in response.data.results:
-                    # Convert SearchResult to dict format that original code expected
                     try:
-                        if hasattr(result, '__dict__'):
-                            batch_results.append(result.__dict__)
-                        else:
-                            batch_results.append(result)
-                    except:
-                        batch_results.append(result)
+                        # Parse the JSON log data - YOUR ORIGINAL WORKING CODE
+                        log_data = json.loads(result.data) if isinstance(result.data, str) else result.data
+                        page_oracle_logs.append(log_data)
+                    except json.JSONDecodeError as e:
+                        print(f"Failed to parse log JSON: {e}")
+                        continue
                 
-                all_results.extend(batch_results)
+                all_oracle_logs.extend(page_oracle_logs)
                 
-                print(f"📊 Page {page_count}: +{len(batch_results)} results (total: {len(all_results)})")
+                print(f"📊 Page {page_count}: +{len(page_oracle_logs)} results (total: {len(all_oracle_logs)})")
                 
-                if max_results and len(all_results) >= max_results:
+                # Check if we've hit our limit
+                if max_results and len(all_oracle_logs) >= max_results:
+                    print(f"🎯 Reached limit of {max_results}")
                     break
                 
-                page_token = self._get_next_page_token(response)
+                # Look for next page token
+                page_token = None
+                if hasattr(response, 'opc_next_page') and response.opc_next_page:
+                    page_token = response.opc_next_page
+                elif hasattr(response.data, 'opc_next_page') and response.data.opc_next_page:
+                    page_token = response.data.opc_next_page
+                elif hasattr(response, 'headers') and response.headers:
+                    page_token = response.headers.get('opc-next-page')
+                
                 if not page_token:
+                    print(f"✅ No more pages")
                     break
-                    
-                if page_count >= 50:
+                
+                # Safety limit
+                if page_count >= 20:
+                    print(f"⚠️ Hit page limit (20)")
                     break
                     
             except Exception as e:
                 print(f"❌ Error on page {page_count}: {e}")
                 break
         
-        final_results = all_results[:max_results] if max_results else all_results
-        print(f"🎉 Returning {len(final_results)} results")
-        
+        # Apply limit and return
+        final_results = all_oracle_logs[:max_results] if max_results else all_oracle_logs
+        print(f"✅ Found {len(final_results)} log entries")
         return final_results
-
     
-    def _convert_oracle_log_to_entry(self, oracle_log) -> LogEntry:
-        """Convert Oracle Cloud log entry to our LogEntry model - handle both formats"""
+    def _parse_oracle_log_entry(self, oracle_log: Dict) -> LogEntry:
+        """Parse Oracle log JSON into LogEntry model - YOUR ORIGINAL WORKING CODE"""
         try:
-            # Handle different response formats
-            log_content = None
-            timestamp_str = None
+            log_content = oracle_log.get('logContent', {})
+            data = log_content.get('data', {})
             
-            # Case 1: Original format (dict-like)
-            if hasattr(oracle_log, 'get') or isinstance(oracle_log, dict):
-                log_content = oracle_log.get('logContent', {})
-                data = log_content.get('data', {})
-                timestamp_str = oracle_log.get('time', '')
-                
-            # Case 2: SearchResult object format  
-            elif hasattr(oracle_log, 'data'):
-                # This might be the new pagination format
-                if hasattr(oracle_log.data, 'get'):
-                    data = oracle_log.data
-                else:
-                    # Convert object to dict
-                    data = oracle_log.data.__dict__ if hasattr(oracle_log.data, '__dict__') else {}
-                
-                timestamp_str = getattr(oracle_log, 'time', '') or getattr(oracle_log, 'timestamp', '')
-                
-            # Case 3: Direct data object
-            else:
-                data = oracle_log.__dict__ if hasattr(oracle_log, '__dict__') else {}
-                timestamp_str = ''
+            # Convert timestamp - Oracle gives milliseconds since epoch
+            timestamp_ms = oracle_log.get('datetime', 0)
+            timestamp = datetime.fromtimestamp(timestamp_ms / 1000.0)
             
-            # Parse timestamp
-            timestamp = datetime.utcnow()
-            if timestamp_str:
-                try:
-                    if timestamp_str.endswith('Z'):
-                        timestamp = datetime.fromisoformat(timestamp_str.replace('Z', '+00:00'))
-                    else:
-                        timestamp = datetime.fromisoformat(timestamp_str)
-                except:
-                    pass
-            
-            # Safe data extraction
-            def safe_get(data_obj, key, default=''):
-                if hasattr(data_obj, 'get'):
-                    return data_obj.get(key, default)
-                elif hasattr(data_obj, key):
-                    return getattr(data_obj, key, default)
-                else:
-                    return default
+            # Alternative: use the ISO timestamp from logContent.time
+            # timestamp = datetime.fromisoformat(log_content.get('time', '').replace('Z', '+00:00'))
             
             return LogEntry(
                 timestamp=timestamp,
-                ip=safe_get(data, 'IP'),
-                country=safe_get(data, 'Country'),
-                country_code=safe_get(data, 'CountryCode'),
-                city=safe_get(data, 'City'),
-                latitude=float(safe_get(data, 'Latitude', 0)) if safe_get(data, 'Latitude') else None,
-                longitude=float(safe_get(data, 'Longitude', 0)) if safe_get(data, 'Longitude') else None,
-                isp=safe_get(data, 'ISP'),
-                protocol=safe_get(data, 'Protocol'),
-                raw_data=oracle_log
+                ip=data.get('IP', ''),
+                protocol=data.get('Protocol', ''),
+                latitude=float(data.get('Latitude', 0.0)),
+                longitude=float(data.get('Longitude', 0.0)),
+                country=data.get('Country', ''),
+                country_code=data.get('CountryCode', ''),
+                city=data.get('City', ''),
+                isp=data.get('ISP', '')
             )
             
         except Exception as e:
-            print(f"❌ Error converting Oracle log: {e}")
-            print(f"   Log type: {type(oracle_log)}")
+            print(f"Error parsing log entry: {e}")
             return None
-
-
     
     async def search_logs_by_country(self, params: Dict[str, Any]) -> List[LogEntry]:
-        """Search logs by country with pagination"""
+        """Search logs by country or country code - WITH PAGINATION"""
         start_time, end_time = self._parse_time_range(params.get('time_range', '24h'))
         query = self._build_country_query(params)
         
+        # Pass the limit to the query executor
         max_results = params.get('limit', 1000)
-        
-        oracle_logs = await self._execute_oracle_query(query, start_time, end_time, max_results)
-        
-        # Convert to LogEntry objects
-        log_entries = []
-        for oracle_log in oracle_logs:
-            try:
-                log_entry = self._convert_oracle_log_to_entry(oracle_log)
-                if log_entry:
-                    log_entries.append(log_entry)
-            except Exception as e:
-                print(f"Error converting log entry: {e}")
-                continue
-        
-        return log_entries
-    
-    async def search_logs_by_ip(self, params: Dict[str, Any]) -> List[LogEntry]:
-        """Search logs by IP with pagination"""
-        start_time, end_time = self._parse_time_range(params.get('time_range', '24h'))
-        query = self._build_ip_query(params)
-        
-        max_results = params.get('limit', 1000)
-        
         oracle_logs = await self._execute_oracle_query(query, start_time, end_time, max_results)
         
         log_entries = []
         for oracle_log in oracle_logs:
-            try:
-                log_entry = self._convert_oracle_log_to_entry(oracle_log)
-                if log_entry:
-                    log_entries.append(log_entry)
-            except Exception as e:
-                print(f"Error converting log entry: {e}")
-                continue
+            entry = self._parse_oracle_log_entry(oracle_log)
+            if entry:
+                log_entries.append(entry)
         
         return log_entries
     
     async def search_logs_by_location(self, params: Dict[str, Any]) -> List[LogEntry]:
-        """Search logs by location with pagination"""
+        """Search logs within geographic bounds - WITH PAGINATION"""
         start_time, end_time = self._parse_time_range(params.get('time_range', '24h'))
         query = self._build_location_query(params)
         
         max_results = params.get('limit', 1000)
-        
         oracle_logs = await self._execute_oracle_query(query, start_time, end_time, max_results)
         
         log_entries = []
         for oracle_log in oracle_logs:
-            try:
-                log_entry = self._convert_oracle_log_to_entry(oracle_log)
-                if log_entry:
-                    log_entries.append(log_entry)
-            except Exception as e:
-                print(f"Error converting log entry: {e}")
-                continue
+            entry = self._parse_oracle_log_entry(oracle_log)
+            if entry:
+                log_entries.append(entry)
         
         return log_entries
     
+    async def search_logs_by_ip(self, params: Dict[str, Any]) -> List[LogEntry]:
+        """Search logs by IP address or range - WITH PAGINATION"""
+        start_time, end_time = self._parse_time_range(params.get('time_range', '24h'))
+        query = self._build_ip_query(params)
+        
+        max_results = params.get('limit', 1000)
+        oracle_logs = await self._execute_oracle_query(query, start_time, end_time, max_results)
+        
+        log_entries = []
+        for oracle_log in oracle_logs:
+            entry = self._parse_oracle_log_entry(oracle_log)
+            if entry:
+                log_entries.append(entry)
+        
+        return log_entries
+    
+    async def get_traffic_analytics(self, params: Dict[str, Any]) -> Dict[str, Any]:
+        """Get aggregated traffic statistics - WITH PAGINATION"""
+        start_time, end_time = self._parse_time_range(params.get('time_range', '24h'))
+        
+        # Get all logs for the time period from the specific log
+        base_query = self._build_base_query()
+        
+        # For analytics, get more data
+        analysis_limit = params.get('limit', 5000)
+        oracle_logs = await self._execute_oracle_query(base_query, start_time, end_time, analysis_limit)
+        
+        # Process analytics
+        analytics = self._process_analytics(oracle_logs, params.get('group_by', 'country'))
+        analytics['time_range'] = params.get('time_range', '24h')
+        analytics['total_requests'] = len(oracle_logs)
+        analytics['log_source'] = self.log_id
+        
+        return analytics
+    
     def _process_analytics(self, oracle_logs: List[Dict], group_by: str) -> Dict[str, Any]:
-        """Process logs into analytics summary"""
+        """Process logs into analytics summary - YOUR ORIGINAL WORKING CODE"""
         from collections import Counter
         
         unique_ips = set()
@@ -363,11 +300,9 @@ class OracleLogsClient:
         
         for oracle_log in oracle_logs:
             try:
-                log_content = oracle_log.get('logContent', {})
-                data = log_content.get('data', {})
+                data = oracle_log.get('logContent', {}).get('data', {})
                 
-                ip = data.get('IP', '')
-                unique_ips.add(ip)
+                unique_ips.add(data.get('IP', ''))
                 protocols.append(data.get('Protocol', ''))
                 countries.append(data.get('Country', ''))
                 cities.append(data.get('City', ''))
@@ -382,8 +317,6 @@ class OracleLogsClient:
                     grouped_data.append(data.get('ISP', 'Unknown'))
                 elif group_by == 'protocol':
                     grouped_data.append(data.get('Protocol', 'Unknown'))
-                elif group_by == 'ip':
-                    grouped_data.append(ip)
                     
             except Exception as e:
                 print(f"Error processing log for analytics: {e}")
@@ -393,82 +326,33 @@ class OracleLogsClient:
         grouped_counter = Counter(grouped_data)
         protocol_counter = Counter(protocols)
         
-        result = {
-            'total_requests': len(oracle_logs),
+        return {
             'unique_ips': len(unique_ips),
             'unique_countries': len(set(countries)),
             'unique_cities': len(set(cities)),
             f'top_{group_by}': [
                 {'name': item, 'count': count} 
-                for item, count in grouped_counter.most_common(20)
+                for item, count in grouped_counter.most_common(10)
             ],
             'protocol_distribution': dict(protocol_counter.most_common()),
-            'top_isps': [isp for isp, _ in Counter(isps).most_common(10)]
+            'top_isps': [isp for isp, _ in Counter(isps).most_common(5)]
         }
-        
-        # If grouping by IP, add detailed IP list
-        if group_by == 'ip':
-            result['unique_ip_details'] = [
-                {'ip': ip, 'requests': count}
-                for ip, count in grouped_counter.most_common(1000)
-            ]
-        
-        return result
     
-    async def get_traffic_analytics(self, params: Dict[str, Any]) -> Dict[str, Any]:
-        """Get traffic analytics with pagination"""
-        start_time, end_time = self._parse_time_range(params.get('time_range', '24h'))
-        query = self._build_analytics_query(params)
+    def _parse_time_range(self, time_range: str) -> tuple[datetime, datetime]:
+        """Parse time range string like '24h', '7d', '1w' into datetime objects"""
+        now = datetime.utcnow()
         
-        # For analytics, we might want more data to analyze
-        analysis_limit = params.get('limit', 5000)
-        
-        oracle_logs = await self._execute_oracle_query(query, start_time, end_time, analysis_limit)
-        
-        # Process analytics
-        group_by = params.get('group_by', 'country')
-        analytics = self._process_analytics(oracle_logs, group_by)
-        
-        # Add metadata
-        analytics['query_info'] = {
-            'time_range': params.get('time_range', '24h'),
-            'total_logs_analyzed': len(oracle_logs),
-            'requested_limit': analysis_limit,
-            'group_by': group_by,
-            'country_filter': params.get('country', 'All countries')
-        }
-        
-        return analytics
-    
-    async def test_basic_query(self):
-        """Test basic query syntax"""
-        simple_query = self._build_base_query()
-        
-        start_time = datetime.utcnow() - timedelta(hours=1)
-        end_time = datetime.utcnow()
-        
-        print(f"🧪 Testing basic query: {simple_query}")
-        
-        try:
-            search_request = SearchLogsDetails(
-                time_start=start_time,
-                time_end=end_time,
-                search_query=simple_query,
-                is_return_field_info=False
-            )
+        if time_range.endswith('h'):
+            hours = int(time_range[:-1])
+            start_time = now - timedelta(hours=hours)
+        elif time_range.endswith('d'):
+            days = int(time_range[:-1])
+            start_time = now - timedelta(days=days)
+        elif time_range.endswith('w'):
+            weeks = int(time_range[:-1])
+            start_time = now - timedelta(weeks=weeks)
+        else:
+            # Default to 24 hours
+            start_time = now - timedelta(hours=24)
             
-            response = self.search_client.search_logs(search_request)
-            
-            if response and response.data and response.data.results:
-                print(f"✅ Basic query works! Got {len(response.data.results)} results")
-                
-                # Show first result structure
-                if response.data.results:
-                    first_result = response.data.results[0]
-                    print(f"📋 First result keys: {list(first_result.keys()) if isinstance(first_result, dict) else 'Not a dict'}")
-                    
-            else:
-                print(f"❌ Basic query returned no results")
-                
-        except Exception as e:
-            print(f"❌ Basic query failed: {e}")
+        return start_time, now
